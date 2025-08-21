@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { z } from "zod";
 import Link from "next/link";
 import Image from "next/image";
+import { getAccessToken } from "@/lib/auth";
 
 // Password validation mirrors signup (>=8 chars & at least one number)
 const passwordIsValid = (pwd: string) => /^(?=.*\d).{8,}$/.test(pwd);
@@ -39,7 +40,7 @@ export default function LoginPage() {
   // If already logged in, redirect to dashboard
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const token = localStorage.getItem("accessToken");
+    const token = getAccessToken();
     if (token) router.replace("/dashboard");
   }, [router]);
 

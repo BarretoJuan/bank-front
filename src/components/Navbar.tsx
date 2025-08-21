@@ -3,6 +3,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { getAccessToken } from "@/lib/auth";
 
 export function Navbar() {
   const pathname = usePathname();
@@ -14,7 +15,7 @@ export function Navbar() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    setHasToken(!!localStorage.getItem("accessToken"));
+    setHasToken(!!getAccessToken());
   }, [pathname]);
 
   // Reset signingOut once auth state changes (e.g., after logging back in)
@@ -28,9 +29,9 @@ export function Navbar() {
     if (signingOut) return;
     setSigningOut(true);
     try {
-      const access = localStorage.getItem("accessToken");
-      const refresh = localStorage.getItem("refreshToken");
-      if (backend && access) {
+  const access = getAccessToken();
+  const refresh = typeof window !== "undefined" ? localStorage.getItem("refreshToken") : null;
+  if (backend && access) {
         fetch(`${backend}/auth/sign-out`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${access}` },

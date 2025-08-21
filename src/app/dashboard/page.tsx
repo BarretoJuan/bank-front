@@ -2,13 +2,13 @@
 import { useEffect, useState, useCallback, Suspense } from "react";
 import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
+import { getAccessToken, handleUnauthorized } from "@/lib/auth";
 
 interface UserResponse {
   first_name: string;
   last_name: string;
   email: string;
-  balance_eur?: number; // backend field (assumed)
-  balance?: number; // fallback
+  balance?: number;
 }
 
 type TxType = "withdrawal" | "deposit" | "transfer";
@@ -37,7 +37,6 @@ function DashboardInner() {
   const [txs, setTxs] = useState<Transaction[]>([]);
   const [txLoading, setTxLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Removed hamburger & logout state (handled globally by Navbar)
   const [action, setAction] = useState<null | "withdraw" | "deposit" | "transfer">(null);
   const [amount, setAmount] = useState("");
   const [recipientEmail, setRecipientEmail] = useState("");
@@ -47,26 +46,23 @@ function DashboardInner() {
 
   const backend = process.env.NEXT_PUBLIC_BACK_URL;
 
-  // Guard: redirect to login if no token
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const token = localStorage.getItem("accessToken");
-    if (!token) {
-      router.replace("/login");
-    }
+    if (!getAccessToken()) router.replace("/login");
   }, [router]);
 
   const fetchUser = useCallback(async (): Promise<void> => {
     if (!backend) return;
     setUserLoading(true);
     try {
-      const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
+  const token = getAccessToken();
       const res = await fetch(`${backend}/user`, {
         headers: {
           "Content-Type": "application/json",
           Authorization: token ? `Bearer ${token}` : "",
         },
       });
+  if (handleUnauthorized(res.status, router)) return;
       if (!res.ok) throw new Error("No se pudo obtener el usuario");
       const data = await res.json();
       setUser(data);
@@ -81,11 +77,12 @@ function DashboardInner() {
     if (!backend) return;
     setTxLoading(true);
     try {
-      const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
+  const token = getAccessToken();
       const qs = filter ? `?type=${filter}` : "";
       const res = await fetch(`${backend}/user/transaction-history${qs}`, {
         headers: { Authorization: token ? `Bearer ${token}` : "" },
       });
+  if (handleUnauthorized(res.status, router)) return;
       if (!res.ok) throw new Error("No se pudieron obtener las transacciones");
       const data = await res.json();
       setTxs(Array.isArray(data) ? data : []);
@@ -151,9 +148,10 @@ function DashboardInner() {
     }
     setSubmitting(true);
     try {
-      const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
+      const token = getAccessToken();
       if (!token) {
         setFormError("Sesión no válida");
+        router.replace("/login");
         return;
       }
   let endpoint = "";
@@ -170,6 +168,10 @@ function DashboardInner() {
         body: JSON.stringify(body),
       });
       const data: unknown = await res.json().catch(() => ({}));
+      if (handleUnauthorized(res.status, router)) {
+        setFormError("Sesión no válida");
+        return;
+      }
       if (!res.ok) {
         let message: string | undefined;
         if (data && typeof data === "object" && "message" in data) {
@@ -408,8 +410,7 @@ function formatDate(ts: string) {
 
 function euroBalance(user: UserResponse | null) {
   if (!user) return 0;
-  if (typeof user.balance_eur === "number") return user.balance_eur;
-  if (typeof user.balance === "number") return user.balance; // fallback
+  if (typeof user.balance === "number") return user.balance;
   return 0;
 }
 
