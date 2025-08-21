@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useCallback, Suspense } from "react";
+import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getAccessToken, handleUnauthorized } from "@/lib/auth";
@@ -43,6 +43,10 @@ function DashboardInner() {
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  // In-memory cache: filter key => transactions list (clears on page reload or after mutation)
+  const txCacheRef = useRef<Record<string, Transaction[]>>({});
+  // Track in-flight requests per filter to dedupe rapid tab changes
+  const inFlightRef = useRef<Record<string, Promise<Transaction[]> | undefined>>({});
 
   const backend = process.env.NEXT_PUBLIC_BACK_URL;
 
@@ -73,32 +77,59 @@ function DashboardInner() {
     }
   }, [backend]);
 
-  const fetchTxs = useCallback(async (): Promise<void> => {
+  const fetchTxs = useCallback(async (force = false): Promise<void> => {
     if (!backend) return;
+    const key = filter ? filter : "all";
+    // Serve cached list if available and not forced
+    if (!force && txCacheRef.current[key]) {
+      setTxs(txCacheRef.current[key]);
+      return;
+    }
+    // Await any ongoing fetch for the same key
+    const inFlight = inFlightRef.current[key];
+    if (!force && inFlight) {
+      try {
+        const existing = await inFlight;
+        setTxs(existing);
+      } catch {/* ignore */}
+      return;
+    }
     setTxLoading(true);
-    try {
-  const token = getAccessToken();
-      const qs = filter ? `?type=${filter}` : "";
+    setError(null);
+    const token = getAccessToken();
+    const qs = filter ? `?type=${filter}` : "";
+    const promise = (async () => {
       const res = await fetch(`${backend}/user/transaction-history${qs}`, {
         headers: { Authorization: token ? `Bearer ${token}` : "" },
       });
-  if (handleUnauthorized(res.status, router)) return;
+      if (handleUnauthorized(res.status, router)) return [] as Transaction[];
       if (!res.ok) throw new Error("No se pudieron obtener las transacciones");
       const data = await res.json();
-      setTxs(Array.isArray(data) ? data : []);
+      return Array.isArray(data) ? data : [];
+    })();
+    inFlightRef.current[key] = promise;
+    try {
+      const list = await promise;
+      txCacheRef.current[key] = list;
+      setTxs(list);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Error desconocido");
     } finally {
+      delete inFlightRef.current[key];
       setTxLoading(false);
     }
-  }, [backend, filter]);
+  }, [backend, filter, router]);
+
+  const invalidateTxCache = useCallback(() => {
+    txCacheRef.current = {};
+  }, []);
 
   useEffect(() => {
     fetchUser();
   }, [fetchUser]);
 
   useEffect(() => {
-    fetchTxs();
+    fetchTxs(); // will use cache when available
   }, [fetchTxs]);
 
   function setFilter(f: TxType | null) {
@@ -182,9 +213,10 @@ function DashboardInner() {
         return;
       }
       setSuccessMsg("Transacción exitosa");
-      // Refresh user balance & transactions
+      // Invalidate cache so subsequent tab visits refetch; then force reload current filter
+      invalidateTxCache();
       fetchUser();
-      fetchTxs();
+      fetchTxs(true);
     } catch (e: unknown) {
       setFormError(e instanceof Error ? e.message : "Error desconocido");
     } finally {
